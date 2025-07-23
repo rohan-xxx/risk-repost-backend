@@ -1,4 +1,4 @@
-require("dotenv").config(); // Load .env file
+require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
@@ -8,12 +8,12 @@ const fs = require("fs");
 
 const app = express();
 
-// ✅ CORS setup - allow frontend to connect
 app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "https://risk-repost-frontend.onrender.com"
+      "http://localhost:3001",
+      "https://risk-repost-frontend.onrender.com",
     ],
     methods: ["GET", "POST"],
     credentials: true,
@@ -22,20 +22,17 @@ app.use(
 
 app.use(express.json());
 
-// ✅ Cloudinary config
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// ✅ Multer setup
 const upload = multer({ dest: "uploads/" });
 
-// ✅ In-memory array to store uploaded image URLs
 let uploadedImages = [];
 
-// ✅ POST /upload — handle multiple image uploads
+// ✅ POST /upload — uploads multiple images
 app.post("/upload", upload.array("image", 10), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -46,9 +43,9 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
 
     for (const file of req.files) {
       const result = await cloudinary.uploader.upload(file.path);
-      uploadedImages.push(result.secure_url);
+      uploadedImages.unshift(result.secure_url); // Add to beginning
       uploadedUrls.push(result.secure_url);
-      fs.unlinkSync(file.path); // clean up local temp files
+      fs.unlinkSync(file.path); // Clean up local temp file
     }
 
     res.status(200).json({ url: uploadedUrls });
@@ -58,17 +55,15 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
   }
 });
 
-// ✅ GET /images — return newest images first
+// ✅ GET /images
 app.get("/images", (req, res) => {
-  res.status(200).json({ images: [...uploadedImages].reverse() });
+  res.status(200).json({ images: uploadedImages });
 });
 
-// ✅ Basic health route
 app.get("/", (req, res) => {
   res.send("📦 Risk Repost backend running.");
 });
 
-// ✅ Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
