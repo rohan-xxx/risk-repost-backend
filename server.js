@@ -5,11 +5,10 @@ const cors = require("cors");
 const multer = require("multer");
 const { v2: cloudinary } = require("cloudinary");
 const fs = require("fs");
-const path = require("path");
 
 const app = express();
 
-// ✅ CORS setup - include localhost and deployed frontend
+// ✅ CORS setup - allow frontend to connect
 app.use(
   cors({
     origin: [
@@ -23,50 +22,53 @@ app.use(
 
 app.use(express.json());
 
-// ✅ Cloudinary config from .env
+// ✅ Cloudinary config
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// ✅ Multer setup to store uploaded files temporarily
+// ✅ Multer setup
 const upload = multer({ dest: "uploads/" });
 
-// In-memory array to store uploaded image URLs
+// ✅ In-memory array to store uploaded image URLs
 let uploadedImages = [];
 
-// ✅ POST /upload — Upload an image and save Cloudinary URL
-app.post("/upload", upload.single("image"), async (req, res) => {
+// ✅ POST /upload — handle multiple image uploads
+app.post("/upload", upload.array("image", 10), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: "No files uploaded" });
     }
 
-    const result = await cloudinary.uploader.upload(req.file.path);
+    const uploadedUrls = [];
 
-    uploadedImages.push(result.secure_url);
+    for (const file of req.files) {
+      const result = await cloudinary.uploader.upload(file.path);
+      uploadedImages.push(result.secure_url);
+      uploadedUrls.push(result.secure_url);
+      fs.unlinkSync(file.path); // clean up local temp files
+    }
 
-    fs.unlinkSync(req.file.path); // Remove local file
-
-    res.status(200).json({ url: result.secure_url });
+    res.status(200).json({ url: uploadedUrls });
   } catch (err) {
     console.error("Upload error:", err.message);
     res.status(500).json({ error: "Upload failed", details: err.message });
   }
 });
 
-// ✅ GET /images — Return all uploaded image URLs
+// ✅ GET /images — return all uploaded URLs
 app.get("/images", (req, res) => {
-  res.status(200).json(uploadedImages);
+  res.status(200).json({ images: uploadedImages });
 });
 
-// ✅ Home route (optional, for testing)
+// ✅ Basic health route
 app.get("/", (req, res) => {
-  res.send("Image upload backend is running.");
+  res.send("📦 Risk Repost backend running.");
 });
 
-// ✅ Start the server
+// ✅ Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
