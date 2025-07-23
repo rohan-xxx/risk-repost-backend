@@ -13,7 +13,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "http://localhost:3001", // ✅ Added support for your local frontend
+      "http://localhost:3001", // ✅ support for local frontend
       "https://risk-repost-frontend.onrender.com",
     ],
     methods: ["GET", "POST"],
@@ -36,15 +36,13 @@ const upload = multer({ dest: "uploads/" });
 // ✅ In-memory array to store uploaded image URLs
 let uploadedImages = [];
 
-// ✅ POST /upload — handle multiple image uploads
+// ✅ POST /upload — handle multiple image uploads (10 max)
 app.post("/upload", upload.array("image", 10), async (req, res) => {
   try {
     console.log("▶️ Upload route hit");
     console.log("Files received:", req.files?.length);
-    console.log("Files detail:", req.files);
 
     if (!req.files || req.files.length === 0) {
-      console.error("❌ No files uploaded");
       return res.status(400).json({ error: "No files uploaded" });
     }
 
@@ -52,16 +50,20 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
 
     for (const file of req.files) {
       console.log("⏫ Uploading file to Cloudinary:", file.originalname);
-
       const result = await cloudinary.uploader.upload(file.path);
 
-      uploadedImages.push(result.secure_url);
-      uploadedUrls.push(result.secure_url);
+      // ✅ Prevent duplicate: check if URL already exists
+      if (!uploadedImages.includes(result.secure_url)) {
+        uploadedImages.push(result.secure_url);
+        uploadedUrls.push(result.secure_url);
+      } else {
+        console.log("⚠️ Duplicate image skipped:", result.secure_url);
+      }
 
       fs.unlinkSync(file.path); // clean up local temp file
     }
 
-    console.log("✅ Uploaded URLs:", uploadedUrls);
+    console.log("✅ New uploads:", uploadedUrls);
     res.status(200).json({ url: uploadedUrls });
   } catch (err) {
     console.error("❌ Upload error:", err.message);
