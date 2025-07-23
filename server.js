@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config(); // Load .env file
 
 const express = require("express");
 const cors = require("cors");
@@ -8,13 +8,12 @@ const fs = require("fs");
 
 const app = express();
 
-// CORS setup
+// ✅ CORS setup - allow frontend to connect
 app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "http://localhost:3001",
-      "https://risk-repost-frontend.onrender.com",
+      "https://risk-repost-frontend.onrender.com"
     ],
     methods: ["GET", "POST"],
     credentials: true,
@@ -23,21 +22,20 @@ app.use(
 
 app.use(express.json());
 
-// Cloudinary config
+// ✅ Cloudinary config
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Multer setup
+// ✅ Multer setup
 const upload = multer({ dest: "uploads/" });
 
-// In-memory storage
+// ✅ In-memory array to store uploaded image URLs
 let uploadedImages = [];
-let uploadedEtags = [];
 
-// POST /upload — upload multiple images and prevent duplicates
+// ✅ POST /upload — handle multiple image uploads
 app.post("/upload", upload.array("image", 10), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -48,18 +46,9 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
 
     for (const file of req.files) {
       const result = await cloudinary.uploader.upload(file.path);
-
-      // Check for duplicate by etag
-      if (!uploadedEtags.includes(result.etag)) {
-        uploadedEtags.push(result.etag);
-        uploadedImages.push(result.secure_url);
-        uploadedUrls.push(result.secure_url);
-        console.log("✅ Uploaded:", result.secure_url);
-      } else {
-        console.log("⚠️ Duplicate skipped:", result.secure_url);
-      }
-
-      fs.unlinkSync(file.path);
+      uploadedImages.push(result.secure_url);
+      uploadedUrls.push(result.secure_url);
+      fs.unlinkSync(file.path); // clean up local temp files
     }
 
     res.status(200).json({ url: uploadedUrls });
@@ -69,17 +58,17 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
   }
 });
 
-// GET /images — return all stored URLs
+// ✅ GET /images — return newest images first
 app.get("/images", (req, res) => {
-  res.status(200).json({ images: uploadedImages });
+  res.status(200).json({ images: [...uploadedImages].reverse() });
 });
 
-// Health route
+// ✅ Basic health route
 app.get("/", (req, res) => {
   res.send("📦 Risk Repost backend running.");
 });
 
-// Start server
+// ✅ Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
