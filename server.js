@@ -7,32 +7,31 @@ const { v2: cloudinary } = require("cloudinary");
 
 const app = express();
 
-// 🔐 Cloudinary Config
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-// ✅ CORS Setup
+// ✅ CORS setup
 app.use(
   cors({
     origin: [
       "http://localhost:3000",
       "http://localhost:3001",
-      "https://risk-repost-frontend.onrender.com",
+      "https://risk-repost-frontend.onrender.com"
     ],
     methods: ["GET", "POST"],
-    credentials: true,
+    credentials: true
   })
 );
-
 app.use(express.json());
 
-// ✅ Multer Setup for File Upload
+// ✅ Cloudinary Config
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// ✅ Multer setup for image upload
 const upload = multer({ dest: "uploads/" });
 
-// ✅ POST /upload — Upload Multiple Images to Cloudinary
+// ✅ POST /upload — uploads multiple images to Cloudinary
 app.post("/upload", upload.array("image", 10), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -44,49 +43,50 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
     for (const file of req.files) {
       const result = await cloudinary.uploader.upload(file.path);
       uploadedUrls.push(result.secure_url);
-      fs.unlinkSync(file.path); // delete local temp file
+      fs.unlinkSync(file.path); // clean local file
     }
 
-    res.status(200).json({ images: uploadedUrls });
+    res.status(200).json({ urls: uploadedUrls });
   } catch (err) {
     console.error("Upload error:", err.message);
     res.status(500).json({ error: "Upload failed", details: err.message });
   }
 });
 
-// ✅ GET /images — Fetch All Images from Cloudinary
+// ✅ GET /images?page=1 — fetch 20 images per page from Cloudinary
 app.get("/images", async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = 20;
+  const offset = (page - 1) * limit;
+
   try {
-    let allImages = [];
-    let nextCursor = undefined;
+    const result = await cloudinary.search
+      .expression("resource_type:image")
+      .sort_by("created_at", "desc")
+      .max_results(500) // Max 500 per Cloudinary's search API
+      .execute();
 
-    do {
-      const result = await cloudinary.search
-        .expression("resource_type:image")
-        .sort_by("created_at", "desc")
-        .max_results(100)
-        .next_cursor(nextCursor)
-        .execute();
+    const allImages = result.resources.map((img) => img.secure_url);
+    const paginatedImages = allImages.slice(offset, offset + limit);
+    const totalPages = Math.ceil(allImages.length / limit);
 
-      const urls = result.resources.map((img) => img.secure_url);
-      allImages.push(...urls);
-
-      nextCursor = result.next_cursor;
-    } while (nextCursor);
-
-    res.status(200).json({ images: allImages });
+    res.status(200).json({
+      images: paginatedImages,
+      currentPage: page,
+      totalPages
+    });
   } catch (err) {
-    console.error("Cloudinary fetch error:", err.message);
+    console.error("Image fetch error:", err.message);
     res.status(500).json({ error: "Failed to fetch images" });
   }
 });
 
-// ✅ Root Route
+// ✅ Root endpoint
 app.get("/", (req, res) => {
-  res.send("📦 Risk Repost backend is running.");
+  res.send("📦 Risk Repost backend running.");
 });
 
-// ✅ Start Server
+// ✅ Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
