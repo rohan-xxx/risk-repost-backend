@@ -12,7 +12,7 @@ const app = express();
 const allowedOrigins = [
   "http://localhost:3000",
   "http://192.168.1.2:3000",
-  "https://risk-repost-frontend.yourdomain.com"
+  "https://risk-repost-frontend.onrender.com"
 ];
 app.use(
   cors({
