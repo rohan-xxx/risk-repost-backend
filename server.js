@@ -9,7 +9,11 @@ const { Client } = require("pg");
 const app = express();
 
 /* ✅ FIXED CORS */
-const allowedOrigins = ["http://localhost:3000", "http://192.168.1.2:3000","https://risk-repost-backend.onrender.com"];
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://192.168.1.2:3000",
+  "https://risk-repost-frontend.yourdomain.com"
+];
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -56,7 +60,8 @@ const client = new Client({
       public_id STRING NOT NULL,
       url STRING NOT NULL,
       likes INT8 DEFAULT 0,
-      comments JSONB DEFAULT '[]'
+      comments JSONB DEFAULT '[]',
+      created_at TIMESTAMPTZ DEFAULT NOW()  -- ✅ Added column
     );
   `);
 
@@ -65,7 +70,7 @@ const client = new Client({
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       image_id UUID NOT NULL,
       user_ip STRING NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT now(),
+      created_at TIMESTAMPTZ DEFAULT NOW(),
       CONSTRAINT image_likes_image_id_fkey FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE,
       UNIQUE (image_id, user_ip)
     );
@@ -88,7 +93,9 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
       const result = await cloudinary.uploader.upload(file.path);
 
       const inserted = await client.query(
-        "INSERT INTO images (public_id, url, likes, comments) VALUES ($1, $2, 0, '[]') RETURNING id, url, likes, comments",
+        `INSERT INTO images (public_id, url, likes, comments, created_at)
+         VALUES ($1, $2, 0, '[]', NOW())
+         RETURNING id, url, likes, comments, created_at`,
         [result.public_id, result.secure_url]
       );
 
@@ -96,7 +103,6 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
       fs.unlinkSync(file.path);
     }
 
-    // ✅ Return full image objects to frontend
     res.status(200).json({ images: uploadedImages });
   } catch (err) {
     console.error("Upload error:", err.message);
@@ -104,7 +110,7 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
   }
 });
 
-/* ✅ Fetch images with pagination */
+/* ✅ Fetch images (sorted by created_at DESC) */
 app.get("/images", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -112,7 +118,10 @@ app.get("/images", async (req, res) => {
     const offset = (page - 1) * limit;
 
     const result = await client.query(
-      "SELECT id, url, likes, comments FROM images ORDER BY id DESC LIMIT $1 OFFSET $2",
+      `SELECT id, url, likes, comments, created_at
+       FROM images
+       ORDER BY created_at DESC
+       LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
 
