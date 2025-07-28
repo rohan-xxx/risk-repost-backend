@@ -4,16 +4,14 @@ const cors = require("cors");
 const multer = require("multer");
 const fs = require("fs");
 const { v2: cloudinary } = require("cloudinary");
-const { Pool } = require("pg");
+const { Client } = require("pg");
 
 const app = express();
 
-// ✅ CORS setup
 app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "http://localhost:3001",
       "https://risk-repost-frontend.onrender.com"
     ],
     methods: ["GET", "POST"],
@@ -29,17 +27,44 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// ✅ CockroachDB Connection
-const pool = new Pool({
+// ✅ CockroachDB Client
+const client = new Client({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// ✅ Test DB Connection
-pool.query("SELECT NOW()", (err, res) => {
-  if (err) console.error("❌ DB connection failed:", err);
-  else console.log("✅ CockroachDB connected:", res.rows[0]);
-});
+(async () => {
+  try {
+    await client.connect();
+    console.log("✅ CockroachDB connected");
+  } catch (err) {
+    console.error("❌ DB connection failed:", err);
+  }
+})();
+
+// ✅ Ensure tables exist
+(async () => {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS images (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      public_id STRING NOT NULL,
+      url STRING NOT NULL,
+      likes INT8 DEFAULT 0,
+      comments JSONB DEFAULT '[]'
+    );
+  `);
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS image_likes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      image_id UUID NOT NULL,
+      user_ip STRING NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      CONSTRAINT image_likes_image_id_fkey FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE,
+      UNIQUE (image_id, user_ip)
+    );
+  `);
+})();
 
 // ✅ Multer setup
 const upload = multer({ dest: "uploads/" });
@@ -56,9 +81,8 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
     for (const file of req.files) {
       const result = await cloudinary.uploader.upload(file.path);
 
-      // Save to DB
-      await pool.query(
-        "INSERT INTO images (public_id, url) VALUES ($1, $2)",
+      await client.query(
+        "INSERT INTO images (public_id, url, likes, comments) VALUES ($1, $2, 0, '[]')",
         [result.public_id, result.secure_url]
       );
 
@@ -73,23 +97,23 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
   }
 });
 
-// ✅ Fetch images (with likes/comments)
+// ✅ Fetch images with pagination
 app.get("/images", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = 20;
     const offset = (page - 1) * limit;
 
-    const { rows } = await pool.query(
+    const result = await client.query(
       "SELECT id, url, likes, comments FROM images ORDER BY id DESC LIMIT $1 OFFSET $2",
       [limit, offset]
     );
 
-    const totalCount = await pool.query("SELECT COUNT(*) FROM images");
+    const totalCount = await client.query("SELECT COUNT(*) FROM images");
     const totalPages = Math.ceil(totalCount.rows[0].count / limit);
 
     res.status(200).json({
-      images: rows,
+      images: result.rows,
       currentPage: page,
       totalPages
     });
@@ -99,45 +123,75 @@ app.get("/images", async (req, res) => {
   }
 });
 
-// ✅ Like an image
+// ✅ Like an image (IP-based restriction)
 app.post("/like/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    await pool.query("UPDATE images SET likes = likes + 1 WHERE id = $1", [id]);
-    res.json({ success: true });
+
+    // Get user's IP address
+    const ip =
+      req.headers["x-forwarded-for"]?.split(",")[0] ||
+      req.socket.remoteAddress;
+
+    // Check if IP already liked
+    const existingLike = await client.query(
+      "SELECT 1 FROM image_likes WHERE image_id = $1 AND user_ip = $2",
+      [id, ip]
+    );
+
+    if (existingLike.rowCount > 0) {
+      return res.status(400).json({ error: "You have already liked this image" });
+    }
+
+    // Insert into image_likes
+    await client.query(
+      "INSERT INTO image_likes (image_id, user_ip) VALUES ($1, $2)",
+      [id, ip]
+    );
+
+    // Increment like count
+    await client.query("UPDATE images SET likes = likes + 1 WHERE id = $1", [id]);
+
+    res.json({ success: true, message: "Image liked successfully" });
   } catch (err) {
+    console.error("Like error:", err.message);
     res.status(500).json({ error: "Failed to like image" });
   }
 });
 
-// ✅ Add comment to image
+// ✅ Add comment (no user field, just text)
 app.post("/comment/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { user, text } = req.body;
+    const { text } = req.body || {};
 
-    const { rows } = await pool.query("SELECT comments FROM images WHERE id = $1", [id]);
-    let comments = rows[0].comments || [];
-    comments.push({ user, text });
+    if (!text) {
+      return res.status(400).json({ error: "Comment text is required" });
+    }
 
-    await pool.query("UPDATE images SET comments = $1 WHERE id = $2", [
+    const data = await client.query("SELECT comments FROM images WHERE id = $1", [id]);
+    let comments = data.rows[0].comments || [];
+    if (typeof comments === "string") comments = JSON.parse(comments);
+
+    comments.push({ comment: text });
+
+    await client.query("UPDATE images SET comments = $1 WHERE id = $2", [
       JSON.stringify(comments),
       id
     ]);
 
     res.json({ success: true });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Failed to add comment" });
   }
 });
 
-// ✅ Root
+// ✅ Root endpoint
 app.get("/", (req, res) => {
   res.send("📦 Risk Repost backend running.");
 });
 
 // ✅ Start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
