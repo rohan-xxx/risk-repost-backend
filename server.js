@@ -4,6 +4,7 @@ const cors = require("cors");
 const multer = require("multer");
 const fs = require("fs");
 const { v2: cloudinary } = require("cloudinary");
+const { Pool } = require("pg");
 
 const app = express();
 
@@ -28,54 +29,69 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// ✅ Multer setup for image upload
+// ✅ CockroachDB Connection
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+
+// ✅ Test DB Connection
+pool.query("SELECT NOW()", (err, res) => {
+  if (err) console.error("❌ DB connection failed:", err);
+  else console.log("✅ CockroachDB connected:", res.rows[0]);
+});
+
+// ✅ Multer setup
 const upload = multer({ dest: "uploads/" });
 
-// ✅ POST /upload — upload images to Cloudinary
+// ✅ Upload images → Cloudinary + DB
 app.post("/upload", upload.array("image", 10), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: "No files uploaded" });
     }
 
-    const uploadedUrls = [];
+    const uploadedImages = [];
 
     for (const file of req.files) {
       const result = await cloudinary.uploader.upload(file.path);
-      uploadedUrls.push(result.secure_url);
-      fs.unlinkSync(file.path); // Remove local temp file
+
+      // Save to DB
+      await pool.query(
+        "INSERT INTO images (public_id, url) VALUES ($1, $2)",
+        [result.public_id, result.secure_url]
+      );
+
+      uploadedImages.push(result.secure_url);
+      fs.unlinkSync(file.path);
     }
 
-    res.status(200).json({ urls: uploadedUrls });
+    res.status(200).json({ urls: uploadedImages });
   } catch (err) {
     console.error("Upload error:", err.message);
     res.status(500).json({ error: "Upload failed", details: err.message });
   }
 });
 
-// ✅ GET /images?page=1 — Paginated images
+// ✅ Fetch images (with likes/comments)
 app.get("/images", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = 20; // images per page
-    const start = (page - 1) * limit;
+    const limit = 20;
+    const offset = (page - 1) * limit;
 
-    // Fetch from Cloudinary
-    const result = await cloudinary.search
-      .expression("resource_type:image")
-      .sort_by("created_at", "desc")
-      .max_results(500) // Cloudinary allows max 500
-      .execute();
+    const { rows } = await pool.query(
+      "SELECT id, url, likes, comments FROM images ORDER BY id DESC LIMIT $1 OFFSET $2",
+      [limit, offset]
+    );
 
-    const allImages = result.resources.map((img) => img.secure_url);
-
-    const totalPages = Math.ceil(allImages.length / limit);
-    const paginatedImages = allImages.slice(start, start + limit);
+    const totalCount = await pool.query("SELECT COUNT(*) FROM images");
+    const totalPages = Math.ceil(totalCount.rows[0].count / limit);
 
     res.status(200).json({
-      images: paginatedImages,
+      images: rows,
       currentPage: page,
-      totalPages: totalPages
+      totalPages
     });
   } catch (err) {
     console.error("Image fetch error:", err.message);
@@ -83,7 +99,39 @@ app.get("/images", async (req, res) => {
   }
 });
 
-// ✅ Root endpoint
+// ✅ Like an image
+app.post("/like/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query("UPDATE images SET likes = likes + 1 WHERE id = $1", [id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to like image" });
+  }
+});
+
+// ✅ Add comment to image
+app.post("/comment/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { user, text } = req.body;
+
+    const { rows } = await pool.query("SELECT comments FROM images WHERE id = $1", [id]);
+    let comments = rows[0].comments || [];
+    comments.push({ user, text });
+
+    await pool.query("UPDATE images SET comments = $1 WHERE id = $2", [
+      JSON.stringify(comments),
+      id
+    ]);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to add comment" });
+  }
+});
+
+// ✅ Root
 app.get("/", (req, res) => {
   res.send("📦 Risk Repost backend running.");
 });
