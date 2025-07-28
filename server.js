@@ -9,7 +9,7 @@ const { Client } = require("pg");
 const app = express();
 
 /* ✅ FIXED CORS */
-const allowedOrigins = ["http://localhost:3000", "http://192.168.1.2:3000"];
+const allowedOrigins = ["http://localhost:3000", "http://192.168.1.2:3000","https://risk-repost-backend.onrender.com"];
 app.use(
   cors({
     origin: function (origin, callback) {
