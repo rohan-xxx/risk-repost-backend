@@ -9,16 +9,8 @@ const crypto = require("crypto");
 
 const app = express();
 
-/* ✅ FIXED CORS */
-<<<<<<< HEAD
-const allowedOrigins = [
-  "http://localhost:3000",
-  "http://192.168.1.2:3000",
-  "https://risk-repost-frontend.onrender.com"
-];
-=======
+
 const allowedOrigins = ["http://localhost:3000", "http://192.168.1.2:3000","https://risk-repost-backend.onrender.com"];
->>>>>>> e78fdec (duplicate images are not allowed implemented)
 app.use(
   cors({
     origin: function (origin, callback) {
