@@ -127,24 +127,56 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
 });
 
 
+
+
 /* ✅ Fetch images with pagination */
+
+//   const page = parseInt(req.query.page) || 1;
+//   const limit = 20;
+//   const offset = (page - 1) * limit;
+
+//   try {
+//     const result = await client.query(
+//       "SELECT id, url, likes, comments FROM images ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+//       [limit, offset]
+//     );
+
+//     res.status(200).json({ images: result.rows });
+//   } catch (err) {
+//     console.error("Error fetching images:", err.message);
+//     res.status(500).json({ error: "Failed to fetch images", details: err.message });
+//   }
+// });
+
 app.get("/images", async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = 20;
   const offset = (page - 1) * limit;
 
   try {
+    // 1. Get paginated images
     const result = await client.query(
       "SELECT id, url, likes, comments FROM images ORDER BY created_at DESC LIMIT $1 OFFSET $2",
       [limit, offset]
     );
 
-    res.status(200).json({ images: result.rows });
-  } catch (err) {
-    console.error("Error fetching images:", err.message);
-    res.status(500).json({ error: "Failed to fetch images", details: err.message });
+    // 2. Get total count of images
+    const countResult = await client.query("SELECT COUNT(*) FROM images");
+    const totalImages = parseInt(countResult.rows[0].count);
+    const totalPages = Math.ceil(totalImages / limit);
+
+    // 3. Send all required data
+    res.status(200).json({
+      images: result.rows,
+      totalPages,
+      currentPage: page,
+    });
+  } catch (error) {
+    console.error("Error fetching images:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
+
 
 
 
