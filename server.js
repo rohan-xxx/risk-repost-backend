@@ -5,6 +5,7 @@ const multer = require("multer");
 const fs = require("fs");
 const { v2: cloudinary } = require("cloudinary");
 const { Client } = require("pg");
+const crypto = require("crypto");
 
 const app = express();
 
@@ -93,26 +94,33 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
     const uploadedImages = [];
 
     for (const file of req.files) {
-      const result = await cloudinary.uploader.upload(file.path);
-      const { public_id, secure_url: url, etag } = result;
+      // ✅ Step 1: Read file buffer
+      const fileBuffer = fs.readFileSync(file.path);
 
-      // ✅ Check if image with same etag already exists
-      const duplicate = await client.query("SELECT * FROM images WHERE etag = $1", [etag]);
+      // ✅ Step 2: Generate SHA-256 hash
+      const hash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
+
+      // ✅ Step 3: Check DB for duplicate hash
+      const duplicate = await client.query("SELECT 1 FROM images WHERE etag = $1", [hash]);
 
       if (duplicate.rowCount > 0) {
-        // Skip duplicate
-        fs.unlinkSync(file.path); // Clean up
+        console.log("❌ Duplicate found:", file.originalname);
+        fs.unlinkSync(file.path); // clean up
         continue;
       }
 
-      // ✅ Insert new image
+      // ✅ Step 4: Upload to Cloudinary
+      const result = await cloudinary.uploader.upload(file.path);
+      const { public_id, secure_url: url } = result;
+
+      // ✅ Step 5: Insert image with computed hash
       const inserted = await client.query(
         "INSERT INTO images (public_id, url, likes, comments, etag) VALUES ($1, $2, 0, '[]', $3) RETURNING id, url, likes, comments",
-        [public_id, url, etag]
+        [public_id, url, hash]
       );
 
       uploadedImages.push(inserted.rows[0]);
-      fs.unlinkSync(file.path);
+      fs.unlinkSync(file.path); // clean up
     }
 
     if (uploadedImages.length === 0) {
