@@ -9,11 +9,15 @@ const { Client } = require("pg");
 const app = express();
 
 /* ✅ FIXED CORS */
+<<<<<<< HEAD
 const allowedOrigins = [
   "http://localhost:3000",
   "http://192.168.1.2:3000",
   "https://risk-repost-frontend.onrender.com"
 ];
+=======
+const allowedOrigins = ["http://localhost:3000", "http://192.168.1.2:3000","https://risk-repost-backend.onrender.com"];
+>>>>>>> e78fdec (duplicate images are not allowed implemented)
 app.use(
   cors({
     origin: function (origin, callback) {
@@ -60,8 +64,7 @@ const client = new Client({
       public_id STRING NOT NULL,
       url STRING NOT NULL,
       likes INT8 DEFAULT 0,
-      comments JSONB DEFAULT '[]',
-      created_at TIMESTAMPTZ DEFAULT NOW()  -- ✅ Added column
+      comments JSONB DEFAULT '[]'
     );
   `);
 
@@ -70,7 +73,7 @@ const client = new Client({
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       image_id UUID NOT NULL,
       user_ip STRING NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
+      created_at TIMESTAMPTZ DEFAULT now(),
       CONSTRAINT image_likes_image_id_fkey FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE,
       UNIQUE (image_id, user_ip)
     );
@@ -91,16 +94,29 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
 
     for (const file of req.files) {
       const result = await cloudinary.uploader.upload(file.path);
+      const { public_id, secure_url: url, etag } = result;
 
+      // ✅ Check if image with same etag already exists
+      const duplicate = await client.query("SELECT * FROM images WHERE etag = $1", [etag]);
+
+      if (duplicate.rowCount > 0) {
+        // Skip duplicate
+        fs.unlinkSync(file.path); // Clean up
+        continue;
+      }
+
+      // ✅ Insert new image
       const inserted = await client.query(
-        `INSERT INTO images (public_id, url, likes, comments, created_at)
-         VALUES ($1, $2, 0, '[]', NOW())
-         RETURNING id, url, likes, comments, created_at`,
-        [result.public_id, result.secure_url]
+        "INSERT INTO images (public_id, url, likes, comments, etag) VALUES ($1, $2, 0, '[]', $3) RETURNING id, url, likes, comments",
+        [public_id, url, etag]
       );
 
       uploadedImages.push(inserted.rows[0]);
       fs.unlinkSync(file.path);
+    }
+
+    if (uploadedImages.length === 0) {
+      return res.status(409).json({ error: "All images were duplicates" });
     }
 
     res.status(200).json({ images: uploadedImages });
@@ -110,7 +126,8 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
   }
 });
 
-/* ✅ Fetch images (sorted by created_at DESC) */
+
+/* ✅ Fetch images with pagination */
 app.get("/images", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -118,10 +135,7 @@ app.get("/images", async (req, res) => {
     const offset = (page - 1) * limit;
 
     const result = await client.query(
-      `SELECT id, url, likes, comments, created_at
-       FROM images
-       ORDER BY created_at DESC
-       LIMIT $1 OFFSET $2`,
+      "SELECT id, url, likes, comments FROM images ORDER BY id DESC LIMIT $1 OFFSET $2",
       [limit, offset]
     );
 
