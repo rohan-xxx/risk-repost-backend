@@ -10,7 +10,7 @@ const crypto = require("crypto");
 const app = express();
 
 
-const allowedOrigins = ["http://localhost:3000", "http://192.168.1.2:3000","https://risk-repost-backend.onrender.com"];
+const allowedOrigins = ["http://localhost:3000", "http://192.168.1.2:3000","https://risk-repost-backend.onrender.com","https://risk-repost-frontend.onrender.com" ];
 app.use(
   cors({
     origin: function (origin, callback) {
