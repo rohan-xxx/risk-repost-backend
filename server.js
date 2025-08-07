@@ -129,29 +129,24 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
 
 /* ✅ Fetch images with pagination */
 app.get("/images", async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = 20;
-    const offset = (page - 1) * limit;
+  const page = parseInt(req.query.page) || 1;
+  const limit = 20;
+  const offset = (page - 1) * limit;
 
+  try {
     const result = await client.query(
-      "SELECT id, url, likes, comments FROM images ORDER BY id DESC LIMIT $1 OFFSET $2",
+      "SELECT id, url, likes, comments FROM images ORDER BY created_at DESC LIMIT $1 OFFSET $2",
       [limit, offset]
     );
 
-    const totalCount = await client.query("SELECT COUNT(*) FROM images");
-    const totalPages = Math.ceil(totalCount.rows[0].count / limit);
-
-    res.status(200).json({
-      images: result.rows,
-      currentPage: page,
-      totalPages,
-    });
+    res.status(200).json({ images: result.rows });
   } catch (err) {
-    console.error("Image fetch error:", err.message);
-    res.status(500).json({ error: "Failed to fetch images" });
+    console.error("Error fetching images:", err.message);
+    res.status(500).json({ error: "Failed to fetch images", details: err.message });
   }
 });
+
+
 
 /* ✅ Like an image */
 app.post("/like/:id", async (req, res) => {
