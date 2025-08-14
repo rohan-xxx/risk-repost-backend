@@ -3,9 +3,12 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const fs = require("fs");
-const { v2: cloudinary } = require("cloudinary");
+const cloudinary = require("cloudinary").v2;
 const { Client } = require("pg");
 const crypto = require("crypto");
+const fsPromises = require('fs').promises; // use async unlink
+
+
 
 const app = express();
 
@@ -73,10 +76,10 @@ const client = new Client({
   `);
 })();
 
-/* ✅ Multer setup */
 const upload = multer({ dest: "uploads/" });
 
-/* ✅ Upload images → Cloudinary + DB */
+
+/* ✅ Upload images → Cloudinary + DB (Only compress if >500KB) */
 app.post("/upload", upload.array("image", 10), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -86,33 +89,51 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
     const uploadedImages = [];
 
     for (const file of req.files) {
-      // ✅ Step 1: Read file buffer
-      const fileBuffer = fs.readFileSync(file.path);
-
-      // ✅ Step 2: Generate SHA-256 hash
+      const fileBuffer = await fsPromises.readFile(file.path);
       const hash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
 
-      // ✅ Step 3: Check DB for duplicate hash
-      const duplicate = await client.query("SELECT 1 FROM images WHERE etag = $1", [hash]);
-
+      // ❌ Check for duplicates
+      const duplicate = await client.query(
+        "SELECT 1 FROM images WHERE etag = $1",
+        [hash]
+      );
       if (duplicate.rowCount > 0) {
         console.log("❌ Duplicate found:", file.originalname);
-        fs.unlinkSync(file.path); // clean up
+        await fsPromises.unlink(file.path);
         continue;
       }
 
-      // ✅ Step 4: Upload to Cloudinary
-      const result = await cloudinary.uploader.upload(file.path);
+      // 📏 Check file size (bytes) — 500KB = 512000 bytes
+      const fileSize = file.size;
+      let uploadOptions = { folder: "uploads" };
+
+      if (fileSize > 512000) {
+        console.log(`⚡ Compressing large image: ${file.originalname}`);
+        uploadOptions = {
+          folder: "uploads",
+          quality: "auto:good",     // compress without noticeable distortion
+          fetch_format: "auto",     // best delivery format
+          transformation: [
+            { width: 1920, height: 1920, crop: "limit" }
+          ]
+        };
+      }
+
+      // ✅ Upload to Cloudinary
+      const result = await cloudinary.uploader.upload(file.path, uploadOptions);
+
       const { public_id, secure_url: url } = result;
 
-      // ✅ Step 5: Insert image with computed hash
+      // ✅ Store in DB
       const inserted = await client.query(
         "INSERT INTO images (public_id, url, likes, comments, etag) VALUES ($1, $2, 0, '[]', $3) RETURNING id, url, likes, comments",
         [public_id, url, hash]
       );
 
       uploadedImages.push(inserted.rows[0]);
-      fs.unlinkSync(file.path); // clean up
+
+      // 🧹 Remove temp file
+      await fsPromises.unlink(file.path);
     }
 
     if (uploadedImages.length === 0) {
@@ -125,6 +146,8 @@ app.post("/upload", upload.array("image", 10), async (req, res) => {
     res.status(500).json({ error: "Upload failed", details: err.message });
   }
 });
+
+
 
 
 
